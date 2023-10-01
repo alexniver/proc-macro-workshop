@@ -54,26 +54,24 @@ fn do_extend(ast: syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
 fn struct_builder(
     builder_ident: &Ident,
-    struct_fields: &Vec<Option<FieldInfo>>,
+    struct_fields: &Vec<FieldInfo>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let mut inner = proc_macro2::TokenStream::new();
     for f in struct_fields.iter() {
-        if let Some(FieldInfo {
+        let FieldInfo {
             ident,
             ty,
             field_path_seg,
             ..
-        }) = f
-        {
-            if field_path_seg == &FieldPathSeg::Vec {
-                inner.extend(quote!(
-                    #ident: std::option::Option<Vec<#ty>>,
-                ));
-            } else {
-                inner.extend(quote!(
-                    #ident: std::option::Option<#ty>,
-                ));
-            }
+        } = f;
+        if field_path_seg == &FieldPathSeg::Vec {
+            inner.extend(quote!(
+                #ident: std::option::Option<Vec<#ty>>,
+            ));
+        } else {
+            inner.extend(quote!(
+                #ident: std::option::Option<#ty>,
+            ));
         }
     }
 
@@ -87,56 +85,54 @@ fn struct_builder(
 fn struct_builder_impl(
     ident: &Ident,
     builder_ident: &Ident,
-    struct_fields: &Vec<Option<FieldInfo>>,
+    struct_fields: &Vec<FieldInfo>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let mut builder_impls = proc_macro2::TokenStream::new();
 
     for f in struct_fields.iter() {
-        if let Some(FieldInfo {
+        let FieldInfo {
             ident,
             ty,
             each,
             field_path_seg,
             ..
-        }) = f
-        {
-            let mut is_same_name_gened = false;
+        } = f;
+        let mut is_same_name_gened = false;
 
-            if field_path_seg == &FieldPathSeg::Vec {
-                if let Some(each_name) = each {
-                    builder_impls.extend(quote!(
-                        fn #each_name(&mut self, v: #ty) -> &mut Self{
-                            if let Some(ref mut arr) = self.#ident {
-                                arr.push(v);
-                            } else {
-                                self.#ident = Some(vec![v]);
-                            }
-                            self
+        if field_path_seg == &FieldPathSeg::Vec {
+            if let Some(each_name) = each {
+                builder_impls.extend(quote!(
+                    fn #each_name(&mut self, v: #ty) -> &mut Self{
+                        if let Some(ref mut arr) = self.#ident {
+                            arr.push(v);
+                        } else {
+                            self.#ident = Some(vec![v]);
                         }
-                    ));
-
-                    if each_name == &ident.to_string() {
-                        is_same_name_gened = true;
+                        self
                     }
+                ));
+
+                if each_name == &ident.to_string() {
+                    is_same_name_gened = true;
                 }
             }
+        }
 
-            if !is_same_name_gened {
-                if field_path_seg == &FieldPathSeg::Vec {
-                    builder_impls.extend(quote!(
-                        fn #ident(&mut self, #ident: Vec<#ty>) -> &mut Self{
-                            self.#ident = std::option::Option::Some(#ident);
-                            self
-                        }
-                    ));
-                } else {
-                    builder_impls.extend(quote!(
-                        fn #ident(&mut self, #ident: #ty) -> &mut Self{
-                            self.#ident = std::option::Option::Some(#ident);
-                            self
-                        }
-                    ));
-                }
+        if !is_same_name_gened {
+            if field_path_seg == &FieldPathSeg::Vec {
+                builder_impls.extend(quote!(
+                    fn #ident(&mut self, #ident: Vec<#ty>) -> &mut Self{
+                        self.#ident = std::option::Option::Some(#ident);
+                        self
+                    }
+                ));
+            } else {
+                builder_impls.extend(quote!(
+                    fn #ident(&mut self, #ident: #ty) -> &mut Self{
+                        self.#ident = std::option::Option::Some(#ident);
+                        self
+                    }
+                ));
             }
         }
     }
@@ -144,38 +140,35 @@ fn struct_builder_impl(
     let mut build_inner = proc_macro2::TokenStream::new();
 
     for f in struct_fields.iter() {
-        if let Some(FieldInfo {
+        let FieldInfo {
             ident,
             field_path_seg,
             ..
-        }) = f
-        {
-            match field_path_seg {
-                FieldPathSeg::Normal | FieldPathSeg::Vec => {
-                    build_inner.extend(quote!(
-                        let mut #ident;
-                        if let Some(v) = self.#ident.take() {
-                            #ident = v;
-                        } else {
-                            let err = format!("{} field is missing", stringify!(#ident));
-                            return std::result::Result::Err(err.into());
-                        }
-                    ));
-                }
-                FieldPathSeg::Option => {
-                    build_inner.extend(quote!(
-                        let #ident = self.#ident.take();
-                    ));
-                }
+        } = f;
+        match field_path_seg {
+            FieldPathSeg::Normal | FieldPathSeg::Vec => {
+                build_inner.extend(quote!(
+                    let mut #ident;
+                    if let Some(v) = self.#ident.take() {
+                        #ident = v;
+                    } else {
+                        let err = format!("{} field is missing", stringify!(#ident));
+                        return std::result::Result::Err(err.into());
+                    }
+                ));
+            }
+            FieldPathSeg::Option => {
+                build_inner.extend(quote!(
+                    let #ident = self.#ident.take();
+                ));
             }
         }
     }
 
     let mut inner = proc_macro2::TokenStream::new();
     for f in struct_fields.iter() {
-        if let Some(FieldInfo { ident, .. }) = f {
-            inner.extend(quote!(#ident,));
-        }
+        let ident = &f.ident;
+        inner.extend(quote!(#ident,));
     }
 
     build_inner.extend(quote!(
@@ -200,28 +193,28 @@ fn struct_builder_impl(
 fn struct_impl(
     ident: &Ident,
     builder_ident: &Ident,
-    struct_fields: &Vec<Option<FieldInfo>>,
+    struct_fields: &Vec<FieldInfo>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let mut inner = proc_macro2::TokenStream::new();
 
     for f in struct_fields.iter() {
-        if let Some(FieldInfo {
+        let FieldInfo {
             ident,
             field_path_seg,
             ..
-        }) = f
-        {
-            if field_path_seg == &FieldPathSeg::Vec {
-                inner.extend(quote!(
-                    #ident: Some(vec![]),
-                ));
-            } else {
-                inner.extend(quote!(
-                    #ident: None,
-                ));
-            }
+        } = f;
+
+        if field_path_seg == &FieldPathSeg::Vec {
+            inner.extend(quote!(
+                #ident: Some(vec![]),
+            ));
+        } else {
+            inner.extend(quote!(
+                #ident: None,
+            ));
         }
     }
+
     Ok(quote!(
     impl #ident {
         fn builder() -> #builder_ident{
@@ -232,26 +225,26 @@ fn struct_impl(
     }))
 }
 
-fn get_struct_fields(ast: &syn::DeriveInput) -> syn::Result<Vec<Option<FieldInfo>>> {
+fn get_struct_fields(ast: &syn::DeriveInput) -> syn::Result<Vec<FieldInfo>> {
     let data = &ast.data;
     if let syn::Data::Struct(DataStruct {
         fields: Fields::Named(FieldsNamed { named, .. }),
         ..
     }) = data
     {
-        Ok(named
+        named
             .iter()
             .map(|f| get_real_field_info(f))
-            .collect::<Vec<_>>())
+            .collect::<syn::Result<Vec<_>>>()
     } else {
-        Err(syn::Error::new_spanned(
+        syn::Result::Err(syn::Error::new_spanned(
             &ast.ident,
             "Must define on a Struct with named fields",
         ))
     }
 }
 
-fn get_real_field_info(f: &Field) -> Option<FieldInfo> {
+fn get_real_field_info(f: &Field) -> syn::Result<FieldInfo> {
     if let Some(ident) = &f.ident {
         let mut ty = f.ty.clone();
         let mut field_path_seg = FieldPathSeg::Normal;
@@ -290,23 +283,34 @@ fn get_real_field_info(f: &Field) -> Option<FieldInfo> {
                         each = Some(Ident::new(&s.value(), s.span()));
                         Ok(())
                     } else {
-                        Err(meta.error("unrecognized builder"))
+                        if let syn::Meta::List(ref list) = attr.meta {
+                            Err(syn::Error::new_spanned(
+                                list,
+                                r#"expected `builder(each = "...")`"#,
+                            ))
+                        } else {
+                            Err(syn::Error::new_spanned(
+                                attr,
+                                r#"expected `builder(each = "...")`"#,
+                            ))
+                        }
+                        // Err(meta.error(r#"expected `builder(each = "...")`"#))
                     }
                 });
 
                 if let Err(err) = res {
-                    eprintln!("parse builder(each) error,{:?}", err);
+                    return Err(err);
                 }
             }
         }
 
-        Some(FieldInfo {
+        Ok(FieldInfo {
             ident: ident.clone(),
             ty,
             field_path_seg,
             each,
         })
     } else {
-        None
+        Err(syn::Error::new_spanned(f, "no ident"))
     }
 }
