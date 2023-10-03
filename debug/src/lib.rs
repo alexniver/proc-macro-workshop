@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, parse_quote, DeriveInput};
 
 struct FieldInfo {
     ident: syn::Ident,
@@ -21,7 +21,14 @@ fn do_expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let ident = &ast.ident;
     let field_info_arr = get_field_info_arr(&ast)?;
 
-    let impl_debug = impl_debug(&ident, &field_info_arr)?;
+    let none_phantom_generic_param_arr = get_none_phantom_generic_param_arr(&ast);
+
+    let impl_debug = impl_debug(
+        &ident,
+        &ast.generics,
+        &field_info_arr,
+        &none_phantom_generic_param_arr,
+    )?;
 
     Ok(quote!(
         #impl_debug
@@ -30,9 +37,22 @@ fn do_expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
 fn impl_debug(
     ident: &syn::Ident,
+    generics: &syn::Generics,
     field_info_arr: &Vec<FieldInfo>,
+    none_phantom_generic_param_arr: &Vec<syn::Ident>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let ident_str = &ident.to_string();
+
+    let mut generics = generics.clone();
+    for g in generics.params.iter_mut() {
+        if let syn::GenericParam::Type(t) = g {
+            // if is_t_all_phantom(&t.ident) {
+            if none_phantom_generic_param_arr.contains(&t.ident) {
+                t.bounds.push(parse_quote!(std::fmt::Debug));
+            }
+        }
+    }
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let mut struct_ts = proc_macro2::TokenStream::new();
     struct_ts.extend(quote!(
@@ -55,8 +75,9 @@ fn impl_debug(
             ));
         }
     }
+
     Ok(quote!(
-        impl std::fmt::Debug for #ident {
+        impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 #struct_ts
                 #field_ts
@@ -104,4 +125,111 @@ fn get_field_info(field: &syn::Field) -> syn::Result<FieldInfo> {
     } else {
         Err(syn::Error::new_spanned(field, "fail to get ident"))
     }
+}
+
+// fn is_t_all_phantom(ast: &syn::DeriveInput, t: &syn::Ident) -> bool {
+//     let mut result = true;
+//     if let syn::Data::Struct(syn::DataStruct {
+//         fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
+//         ..
+//     }) = &ast.data
+//     {
+//         for field in named {
+//             if let syn::Type::Path(syn::TypePath {
+//                 path: syn::Path { segments, .. },
+//                 ..
+//             }) = &field.ty
+//             {
+//                 if let Some(path_seg) = segments.last() {
+//                     // eprintln!(
+//                     //     "path seg : {:?} {:?}, {:?}",
+//                     //     path_seg,
+//                     //     path_seg.ident,
+//                     //     path_seg.ident == "PhantomData"
+//                     // );
+//                     if path_seg.ident != "PhantomData" {
+//                         if let syn::PathArguments::AngleBracketed(
+//                             syn::AngleBracketedGenericArguments { args, .. },
+//                         ) = &path_seg.arguments
+//                         {
+//                             if let Some(&syn::GenericArgument::Type(syn::Type::Path(
+//                                 syn::TypePath {
+//                                     path: syn::Path { ref segments, .. },
+//                                     ..
+//                                 },
+//                             ))) = args.first()
+//                             {
+//                                 if let Some(path_seg) = segments.first() {
+//                                     eprintln!("path_seg : {:?}", path_seg);
+//                                     result.push(path_seg.ident.clone());
+//                                     got_inner_t = true;
+//                                 }
+//                             }
+//                         } else {
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//
+//     result
+// }
+
+fn get_none_phantom_generic_param_arr(ast: &syn::DeriveInput) -> Vec<syn::Ident> {
+    let mut result = vec![];
+
+    if let syn::Data::Struct(syn::DataStruct {
+        fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
+        ..
+    }) = &ast.data
+    {
+        for field in named {
+            if let syn::Type::Path(syn::TypePath {
+                path: syn::Path { segments, .. },
+                ..
+            }) = &field.ty
+            {
+                if let Some(path_seg) = segments.last() {
+                    // eprintln!(
+                    //     "path seg : {:?} {:?}, {:?}",
+                    //     path_seg,
+                    //     path_seg.ident,
+                    //     path_seg.ident == "PhantomData"
+                    // );
+                    if path_seg.ident != "PhantomData" {
+                        let mut arguments = &path_seg.arguments;
+                        let mut target_ident = path_seg.ident.clone();
+                        loop {
+                            if let syn::PathArguments::AngleBracketed(
+                                syn::AngleBracketedGenericArguments { args, .. },
+                            ) = arguments
+                            {
+                                if let Some(&syn::GenericArgument::Type(syn::Type::Path(
+                                    syn::TypePath {
+                                        path: syn::Path { ref segments, .. },
+                                        ..
+                                    },
+                                ))) = args.first()
+                                {
+                                    if let Some(path_seg) = segments.last() {
+                                        arguments = &path_seg.arguments;
+                                        if arguments == &syn::PathArguments::None {
+                                            target_ident = path_seg.ident.clone();
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+
+                        result.push(target_ident);
+                    }
+                }
+            }
+        }
+    }
+    result
 }

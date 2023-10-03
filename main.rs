@@ -7,22 +7,22 @@
 //     $ cargo run
 
 use derive_debug::CustomDebug;
+use std::fmt::Debug;
 
 #[derive(CustomDebug)]
-pub struct Field {
-    name: &'static str,
-    #[debug = "0b{:08b}"]
-    bitmask: u8,
+pub struct One<T> {
+    value: T,
+    two: Option<Box<Two<T>>>,
 }
 
+#[derive(CustomDebug)]
+struct Two<T> {
+    one: Box<One<T>>,
+}
+
+fn assert_debug<F: Debug>() {}
+
 fn main() {
-    let f = Field {
-        name: "F",
-        bitmask: 0b00011100,
-    };
-
-    let debug = format!("{:?}", f);
-    let expected = r#"Field { name: "F", bitmask: 0b00011100 }"#;
-
-    assert_eq!(debug, expected);
+    assert_debug::<One<u8>>();
+    assert_debug::<Two<u8>>();
 }
