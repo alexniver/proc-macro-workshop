@@ -48,6 +48,7 @@ fn do_expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     associated_type_visiter.visit_derive_input(&ast);
 
     let impl_debug = impl_debug(
+        &ast,
         &ident,
         &ast.generics,
         &field_info_arr,
@@ -61,6 +62,7 @@ fn do_expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 }
 
 fn impl_debug(
+    ast: &DeriveInput,
     ident: &syn::Ident,
     generics: &syn::Generics,
     field_info_arr: &Vec<FieldInfo>,
@@ -70,22 +72,32 @@ fn impl_debug(
     let ident_str = &ident.to_string();
 
     let mut generics = generics.clone();
-    for g in generics.params.iter_mut() {
-        if let syn::GenericParam::Type(t) = g {
-            if none_phantom_generic_param_arr.contains(&t.ident)
-                && !associated_type_map.contains_key(&t.ident.to_string())
-            {
-                t.bounds.push(parse_quote!(std::fmt::Debug));
+
+    if let Some(ref s) = get_struct_escape_hatch(&ast) {
+        generics.make_where_clause();
+        if let Some(w) = generics.where_clause.as_mut() {
+            if let Ok(s) = syn::parse_str(s) {
+                w.predicates.push(s);
             }
         }
-    }
+    } else {
+        for g in generics.params.iter_mut() {
+            if let syn::GenericParam::Type(t) = g {
+                if none_phantom_generic_param_arr.contains(&t.ident)
+                    && !associated_type_map.contains_key(&t.ident.to_string())
+                {
+                    t.bounds.push(parse_quote!(std::fmt::Debug));
+                }
+            }
+        }
 
-    generics.make_where_clause();
-    for (_, associated_type_arr) in associated_type_map.iter() {
-        for associated_type in associated_type_arr {
-            if let Some(w) = generics.where_clause.as_mut() {
-                w.predicates
-                    .push(parse_quote!(#associated_type: std::fmt::Debug));
+        generics.make_where_clause();
+        for (_, associated_type_arr) in associated_type_map.iter() {
+            for associated_type in associated_type_arr {
+                if let Some(w) = generics.where_clause.as_mut() {
+                    w.predicates
+                        .push(parse_quote!(#associated_type: std::fmt::Debug));
+                }
             }
         }
     }
@@ -165,55 +177,6 @@ fn get_field_info(field: &syn::Field) -> syn::Result<FieldInfo> {
     }
 }
 
-// fn is_t_all_phantom(ast: &syn::DeriveInput, t: &syn::Ident) -> bool {
-//     let mut result = true;
-//     if let syn::Data::Struct(syn::DataStruct {
-//         fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
-//         ..
-//     }) = &ast.data
-//     {
-//         for field in named {
-//             if let syn::Type::Path(syn::TypePath {
-//                 path: syn::Path { segments, .. },
-//                 ..
-//             }) = &field.ty
-//             {
-//                 if let Some(path_seg) = segments.last() {
-//                     // eprintln!(
-//                     //     "path seg : {:?} {:?}, {:?}",
-//                     //     path_seg,
-//                     //     path_seg.ident,
-//                     //     path_seg.ident == "PhantomData"
-//                     // );
-//                     if path_seg.ident != "PhantomData" {
-//                         if let syn::PathArguments::AngleBracketed(
-//                             syn::AngleBracketedGenericArguments { args, .. },
-//                         ) = &path_seg.arguments
-//                         {
-//                             if let Some(&syn::GenericArgument::Type(syn::Type::Path(
-//                                 syn::TypePath {
-//                                     path: syn::Path { ref segments, .. },
-//                                     ..
-//                                 },
-//                             ))) = args.first()
-//                             {
-//                                 if let Some(path_seg) = segments.first() {
-//                                     eprintln!("path_seg : {:?}", path_seg);
-//                                     result.push(path_seg.ident.clone());
-//                                     got_inner_t = true;
-//                                 }
-//                             }
-//                         } else {
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-//
-//     result
-// }
-
 fn get_none_phantom_generic_param_arr(ast: &syn::DeriveInput) -> Vec<syn::Ident> {
     let mut result = vec![];
 
@@ -260,6 +223,31 @@ fn get_none_phantom_generic_param_arr(ast: &syn::DeriveInput) -> Vec<syn::Ident>
                         result.push(target_ident);
                     }
                 }
+            }
+        }
+    }
+    result
+}
+
+fn get_struct_escape_hatch(ast: &DeriveInput) -> Option<String> {
+    let mut result = None;
+    for attr in ast.attrs.iter() {
+        if attr.path().is_ident("debug") {
+            let res = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("bound") {
+                    let value = meta.value()?;
+                    // this parses `"EarlGrey"`
+                    let s: syn::LitStr = value.parse()?;
+                    result = Some(s.value());
+
+                    Ok(())
+                } else {
+                    Err(syn::Error::new_spanned(attr, "ignore"))
+                }
+            });
+
+            if let Ok(_) = res {
+                break;
             }
         }
     }
