@@ -1,6 +1,10 @@
+mod associated_type_visiter;
+
+use std::collections::HashMap;
+
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, DeriveInput};
+use syn::{parse_macro_input, parse_quote, visit::Visit, DeriveInput};
 
 struct FieldInfo {
     ident: syn::Ident,
@@ -23,11 +27,32 @@ fn do_expand(ast: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     let none_phantom_generic_param_arr = get_none_phantom_generic_param_arr(&ast);
 
+    let generic_type_arr: Vec<String> = ast
+        .generics
+        .params
+        .iter()
+        .filter_map(|f| {
+            if let syn::GenericParam::Type(ty) = f {
+                Some(ty.ident.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut associated_type_visiter = associated_type_visiter::AssociatedTypeVisiter {
+        generic_type_arr,
+        associated_type_map: HashMap::new(),
+    };
+
+    associated_type_visiter.visit_derive_input(&ast);
+
     let impl_debug = impl_debug(
         &ident,
         &ast.generics,
         &field_info_arr,
         &none_phantom_generic_param_arr,
+        &associated_type_visiter.associated_type_map,
     )?;
 
     Ok(quote!(
@@ -40,18 +65,31 @@ fn impl_debug(
     generics: &syn::Generics,
     field_info_arr: &Vec<FieldInfo>,
     none_phantom_generic_param_arr: &Vec<syn::Ident>,
+    associated_type_map: &HashMap<String, Vec<syn::TypePath>>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let ident_str = &ident.to_string();
 
     let mut generics = generics.clone();
     for g in generics.params.iter_mut() {
         if let syn::GenericParam::Type(t) = g {
-            // if is_t_all_phantom(&t.ident) {
-            if none_phantom_generic_param_arr.contains(&t.ident) {
+            if none_phantom_generic_param_arr.contains(&t.ident)
+                && !associated_type_map.contains_key(&t.ident.to_string())
+            {
                 t.bounds.push(parse_quote!(std::fmt::Debug));
             }
         }
     }
+
+    generics.make_where_clause();
+    for (_, associated_type_arr) in associated_type_map.iter() {
+        for associated_type in associated_type_arr {
+            if let Some(w) = generics.where_clause.as_mut() {
+                w.predicates
+                    .push(parse_quote!(#associated_type: std::fmt::Debug));
+            }
+        }
+    }
+
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let mut struct_ts = proc_macro2::TokenStream::new();
@@ -191,12 +229,6 @@ fn get_none_phantom_generic_param_arr(ast: &syn::DeriveInput) -> Vec<syn::Ident>
             }) = &field.ty
             {
                 if let Some(path_seg) = segments.last() {
-                    // eprintln!(
-                    //     "path seg : {:?} {:?}, {:?}",
-                    //     path_seg,
-                    //     path_seg.ident,
-                    //     path_seg.ident == "PhantomData"
-                    // );
                     if path_seg.ident != "PhantomData" {
                         let mut arguments = &path_seg.arguments;
                         let mut target_ident = path_seg.ident.clone();
