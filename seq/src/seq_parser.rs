@@ -10,15 +10,34 @@ pub(crate) struct SeqParser {
 
 impl Parse for SeqParser {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut has_equal = false;
+        // N in 0..10
+        // N in 0..=10
+        // N
         let n_ident: syn::Ident = input.parse()?;
 
+        // in
         input.parse::<syn::Token![in]>()?;
 
+        // 0
         let from: syn::LitInt = input.parse()?;
+        let from = from.base10_parse()?;
 
+        // ..
         input.parse::<syn::Token![..]>()?;
 
+        // =
+        if let Ok(_) = input.parse::<syn::Token![=]>() {
+            has_equal = true;
+            eprintln!("has_equal");
+        }
+
+        // 10
         let to: syn::LitInt = input.parse()?;
+        let mut to = to.base10_parse()?;
+        if has_equal {
+            to += 1;
+        }
 
         let body_buf;
         syn::braced!(body_buf in input);
@@ -26,8 +45,8 @@ impl Parse for SeqParser {
 
         Ok(Self {
             n_ident,
-            from: from.base10_parse()?,
-            to: to.base10_parse()?,
+            from,
+            to,
             body,
         })
     }
@@ -106,7 +125,8 @@ impl SeqParser {
     pub(crate) fn expand_repeat(
         &self,
         ts: &proc_macro2::TokenStream,
-        n: u32,
+        from: u32,
+        to: u32,
     ) -> std::option::Option<proc_macro2::TokenStream> {
         let mut result = proc_macro2::TokenStream::new();
         let mut is_found = false;
@@ -132,7 +152,7 @@ impl SeqParser {
                                     if punct2.to_string() == "*" {
                                         eprintln!("find");
                                         // find
-                                        for i in 0..n {
+                                        for i in from..to {
                                             let group_inner_stream = group.stream();
                                             let expand = self.expand_normal(&group_inner_stream, i);
                                             // eprintln!("extend: {:?}", expand);
@@ -153,8 +173,9 @@ impl SeqParser {
                 }
                 proc_macro2::TokenTree::Group(group) => {
                     let group_inner_stream = group.stream();
-                    if let Some(expand) = self.expand_repeat(&group_inner_stream, n) {
-                        let expand = proc_macro2::Group::new(group.delimiter(), expand);
+                    if let Some(expand) = self.expand_repeat(&group_inner_stream, from, to) {
+                        let mut expand = proc_macro2::Group::new(group.delimiter(), expand);
+                        expand.set_span(group.span());
                         result.extend(quote!(#expand));
 
                         is_found = true;

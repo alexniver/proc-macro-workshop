@@ -11,7 +11,7 @@ pub fn seq(input: TokenStream) -> TokenStream {
 
     let mut result = proc_macro2::TokenStream::new();
 
-    if let Some(expand) = ast.expand_repeat(&ast.body, ast.to) {
+    if let Some(expand) = ast.expand_repeat(&ast.body, ast.from, ast.to) {
         result.extend(expand);
     } else {
         for i in ast.from..ast.to {
