@@ -9,11 +9,15 @@ use crate::seq_parser::SeqParser;
 pub fn seq(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as SeqParser);
 
-    let mut output = proc_macro2::TokenStream::new();
+    let mut result = proc_macro2::TokenStream::new();
 
-    for i in ast.from..ast.to {
-        output.extend(ast.expand(&ast.body, i));
+    if let Some(expand) = ast.expand_repeat(&ast.body, ast.to) {
+        result.extend(expand);
+    } else {
+        for i in ast.from..ast.to {
+            result.extend(ast.expand_normal(&ast.body, i));
+        }
     }
 
-    output.into()
+    result.into()
 }
