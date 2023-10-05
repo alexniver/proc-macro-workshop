@@ -13,10 +13,7 @@ pub fn seq(input: TokenStream) -> TokenStream {
 
     for i in ast.from..ast.to {
         output.extend(ast.expand(&ast.body, i));
-        // output.extend(ast.body.clone());
     }
-
-    eprintln!("output: {:#?}", output);
 
     output.into()
 }
